@@ -90,7 +90,7 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
 .vcard:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(39,39,39,.08)}
 
 /* Player wrapper — 16:9 */
-.yt-player{position:relative;width:100%;padding-top:56.25%;background:linear-gradient(135deg,#0B622D,#00796A);overflow:hidden;border-radius:11px 11px 0 0}
+.yt-player{position:relative;width:100%;padding-top:177.78%;background:linear-gradient(135deg,#0B622D,#00796A);overflow:hidden;border-radius:11px 11px 0 0}
 
 /* Card body */
 .vbody{padding:14px 16px 16px;flex:1;display:flex;flex-direction:column}
@@ -289,6 +289,21 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
     }
 
     // 把占位的.yt-player换成真正能播放的iframe;数据库读出来动态插入的卡片也会走这个函数
+    function loadYouTubeIframe(el, embedUrl, courseId, videoIndex, videoTitle) {
+      var iframe = document.createElement('iframe');
+      iframe.src = embedUrl + (embedUrl.indexOf('?') > -1 ? '&' : '?') + 'autoplay=1';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      iframe.allowFullscreen = true;
+      iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:11px 11px 0 0;';
+      el.innerHTML = '';
+      el.appendChild(iframe);
+      trackEvent('video_play_click', {
+        course_id: courseId,
+        video_index: parseInt(videoIndex),
+        video_title: videoTitle
+      });
+    }
+
     function hydrateYouTubeEmbeds() {
       document.querySelectorAll('.yt-player[data-yt-url]').forEach(function(el) {
         if (el.dataset.hydrated) return; // 避免同一张卡片被重复处理
@@ -299,8 +314,28 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
         var videoIndex = el.getAttribute('data-video-index');
         var videoTitle = el.getAttribute('data-video-title');
         var courseId   = el.getAttribute('data-course-id');
+        var coverImage = el.getAttribute('data-cover-image');
 
-        if (embedUrl) {
+        if (!embedUrl) {
+          el.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0B622D,#00796A)"><i class="ti ti-clock" style="font-size:28px;color:rgba(255,255,255,.3)"></i><span style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35)">Coming Soon</span></div>';
+          return;
+        }
+
+        if (coverImage) {
+          // 有封面图:先显示封面图+播放按钮,点了才真正加载视频(页面打开更快)
+          el.innerHTML =
+            '<img src="' + coverImage + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">' +
+            '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.2)">' +
+              '<div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center">' +
+                '<i class="ti ti-player-play-filled" style="font-size:22px;color:#0B622D"></i>' +
+              '</div>' +
+            '</div>';
+          el.style.cursor = 'pointer';
+          el.addEventListener('click', function(){
+            loadYouTubeIframe(el, embedUrl, courseId, videoIndex, videoTitle);
+          }, {once: true});
+        } else {
+          // 没有封面图:维持原来的行为,页面加载时直接嵌入播放器
           var iframe = document.createElement('iframe');
           iframe.src = embedUrl;
           iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
@@ -318,8 +353,6 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
               });
             }, {once: true});
           });
-        } else {
-          el.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0B622D,#00796A)"><i class="ti ti-clock" style="font-size:28px;color:rgba(255,255,255,.3)"></i><span style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35)">Coming Soon</span></div>';
         }
       });
     }
@@ -357,11 +390,23 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
         var idxLabel = String(item.lesson_index || '').padStart(2, '0');
         var card = document.createElement('div');
         card.className = 'vcard';
-        card.innerHTML =
-          '<div class="yt-player" data-yt-url="' + escapeHTML(item.media_url) + '" ' +
-          'data-video-index="' + escapeHTML(item.lesson_index) + '" ' +
-          'data-video-title="' + escapeHTML(item.title) + '" ' +
-          'data-course-id="' + escapeHTML(item.course_id) + '"></div>' +
+
+        var mediaHtml;
+        if (item.media_type === 'video_file' && item.media_url) {
+          // 上传的视频文件:直接用原生video标签播放,封面图作为poster
+          mediaHtml = '<div class="yt-player"><video src="' + escapeHTML(item.media_url) + '" ' +
+            (item.cover_image ? 'poster="' + escapeHTML(item.cover_image) + '" ' : '') +
+            'controls playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:11px 11px 0 0"></video></div>';
+        } else {
+          mediaHtml = '<div class="yt-player" data-yt-url="' + escapeHTML(item.media_url) + '" ' +
+            'data-video-index="' + escapeHTML(item.lesson_index) + '" ' +
+            'data-video-title="' + escapeHTML(item.title) + '" ' +
+            'data-course-id="' + escapeHTML(item.course_id) + '" ' +
+            (item.cover_image ? 'data-cover-image="' + escapeHTML(item.cover_image) + '" ' : '') +
+            '></div>';
+        }
+
+        card.innerHTML = mediaHtml +
           '<div class="vbody">' +
             '<div class="vidx">Lesson ' + idxLabel + '</div>' +
             '<div class="vtitle">' + escapeHTML(item.title) + '</div>' +
