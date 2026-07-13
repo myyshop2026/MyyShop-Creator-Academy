@@ -181,7 +181,7 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
   <div class="sec-eye">Level Up</div>
   <div class="sec-title">Grow Your Account</div>
   <div class="cg2">
-    <a class="ccard" href="content-creation.html" onclick="trackEvent('course_card_click',{course_id:'content_creation',section:'Grow Your Account'})">
+    <a class="ccard" href="content-creation.html" onclick="trackEvent('course_card_click',{course_id:'content-creation',section:'Grow Your Account'})">
       <div class="cthumb">
         <div class="cthumb-deco" style="width:200px;height:200px;bottom:-60px;right:-50px;opacity:.12"></div>
         <div class="cthumb-deco" style="width:100px;height:100px;top:-30px;left:-20px;opacity:.07"></div>
@@ -198,7 +198,7 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
         <span class="ccta">Start watching <i class="ti ti-arrow-right" style="font-size:12px"></i></span>
       </div>
     </a>
-    <a class="ccard" href="platform-tips.html" onclick="trackEvent('course_card_click',{course_id:'platform_tips',section:'Grow Your Account'})">
+    <a class="ccard" href="platform-tips.html" onclick="trackEvent('course_card_click',{course_id:'platform-tips',section:'Grow Your Account'})">
       <div class="cthumb">
         <div class="cthumb-deco" style="width:200px;height:200px;bottom:-60px;right:-50px;opacity:.12"></div>
         <div class="cthumb-deco" style="width:100px;height:100px;top:-30px;left:-20px;opacity:.07"></div>
@@ -287,4 +287,58 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
     </div>
   </div>
 </footer>
+
+<!-- =============================================
+  接入内容后台数据库:更新课程卡片的标题/简介/课时数
+  (卡片的位置、分组、跳转链接还是原来写死的结构,只更新文字内容)
+============================================= -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  var SUPABASE_URL = 'https://vnjhzybdsxttmsmfwsku.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_5Ffo4fNgEMGpFFtLFkh9ug_dWObFB1g';
+  var client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  async function updateCourseCards(){
+    var coursesResult = await client.from('academy_courses').select('*');
+    if (coursesResult.error) {
+      console.error('加载课程信息失败:', coursesResult.error);
+      return; // 失败时不动原有卡片文字
+    }
+    var courses = coursesResult.data || [];
+
+    // 每门课再单独查一次已发布课时数,保证数字永远和实际一致
+    for (var i = 0; i < courses.length; i++) {
+      var course = courses[i];
+      var countResult = await client
+        .from('content_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('page_type', 'academy_lesson')
+        .eq('course_id', course.course_id)
+        .eq('status', 'published');
+      var lessonCount = countResult.count || 0;
+
+      var card = document.querySelector('.ccard[href="' + course.course_id + '.html"]');
+      if (!card) continue;
+
+      var cpub = card.querySelector('.cpub');
+      var ctitle = card.querySelector('.ctitle');
+      var cmeta = card.querySelector('.cmeta');
+      var cthumbLabel = card.querySelector('.cthumb-label');
+      var cthumbCount = card.querySelector('.cthumb-count');
+
+      if (cpub) cpub.textContent = course.course_group || cpub.textContent;
+      if (ctitle) ctitle.textContent = course.description || ctitle.textContent;
+      if (cthumbLabel) cthumbLabel.textContent = course.course_title || cthumbLabel.textContent;
+      if (cthumbCount) cthumbCount.textContent = lessonCount + ' Videos';
+
+      var metaText = lessonCount + ' lessons';
+      if (course.duration_text) metaText += ' · ' + course.duration_text;
+      if (cmeta) cmeta.textContent = metaText;
+    }
+  }
+
+  updateCourseCards();
+})();
+</script>
 </body></html>

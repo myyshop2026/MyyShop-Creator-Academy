@@ -275,17 +275,12 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
 </footer>
 
   <script>
-    // Extract YouTube video ID from any YouTube URL format
     function getYTId(url) {
       if (!url || url.includes('YOUR_YOUTUBE')) return null;
       var m = url.match(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|embed\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
       return m ? m[1] : null;
     }
 
-    // Build embed URL with recommended params:
-    // rel=0       → no related videos at end
-    // modestbranding=1 → minimal YouTube branding
-    // enablejsapi=1    → allows GA4 YouTube engagement tracking
     function buildEmbedUrl(ytUrl) {
       var id = getYTId(ytUrl);
       if (!id) return null;
@@ -293,9 +288,12 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
         + '?rel=0&modestbranding=1&enablejsapi=1&origin=' + encodeURIComponent(window.location.origin);
     }
 
-    // On page load: swap placeholder thumbnails for real iframes
-    document.addEventListener('DOMContentLoaded', function() {
+    // 把占位的.yt-player换成真正能播放的iframe;数据库读出来动态插入的卡片也会走这个函数
+    function hydrateYouTubeEmbeds() {
       document.querySelectorAll('.yt-player[data-yt-url]').forEach(function(el) {
+        if (el.dataset.hydrated) return; // 避免同一张卡片被重复处理
+        el.dataset.hydrated = '1';
+
         var url = el.getAttribute('data-yt-url');
         var embedUrl = buildEmbedUrl(url);
         var videoIndex = el.getAttribute('data-video-index');
@@ -303,7 +301,6 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
         var courseId   = el.getAttribute('data-course-id');
 
         if (embedUrl) {
-          // Replace placeholder with real iframe
           var iframe = document.createElement('iframe');
           iframe.src = embedUrl;
           iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
@@ -312,7 +309,6 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
           el.innerHTML = '';
           el.appendChild(iframe);
 
-          // Fire GA4 event when user clicks play (iframe focus = interaction)
           iframe.addEventListener('load', function() {
             el.closest('.vcard').addEventListener('click', function() {
               trackEvent('video_play_click', {
@@ -323,10 +319,77 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
             }, {once: true});
           });
         } else {
-          // No valid URL — show "Coming Soon" placeholder
-          el.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0B622D,#00796A)"><i class=\"ti ti-clock\" style=\"font-size:28px;color:rgba(255,255,255,.3)\"></i><span style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35)\">Coming Soon</span></div>';
+          el.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0B622D,#00796A)"><i class="ti ti-clock" style="font-size:28px;color:rgba(255,255,255,.3)"></i><span style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35)">Coming Soon</span></div>';
         }
       });
-    });
+    }
+    window.hydrateYouTubeEmbeds = hydrateYouTubeEmbeds;
+    document.addEventListener('DOMContentLoaded', hydrateYouTubeEmbeds);
+  </script>
+
+  <!-- =============================================
+    接入内容后台数据库
+  ============================================= -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+  (function(){
+    var SUPABASE_URL = 'https://vnjhzybdsxttmsmfwsku.supabase.co';
+    var SUPABASE_KEY = 'sb_publishable_5Ffo4fNgEMGpFFtLFkh9ug_dWObFB1g';
+    var client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // 从当前网址文件名自动识别是哪个课程,比如 myyfinds.html → myyfinds,不用每个页面单独写死
+    var COURSE_ID = window.location.pathname.split('/').pop().replace('.html', '') || 'overview';
+
+    function escapeHTML(str){
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function renderLessons(items){
+      var grid = document.querySelector('.vgrid');
+      if (!grid) return;
+      grid.innerHTML = '';
+
+      items.forEach(function(item){
+        var idxLabel = String(item.lesson_index || '').padStart(2, '0');
+        var card = document.createElement('div');
+        card.className = 'vcard';
+        card.innerHTML =
+          '<div class="yt-player" data-yt-url="' + escapeHTML(item.media_url) + '" ' +
+          'data-video-index="' + escapeHTML(item.lesson_index) + '" ' +
+          'data-video-title="' + escapeHTML(item.title) + '" ' +
+          'data-course-id="' + escapeHTML(item.course_id) + '"></div>' +
+          '<div class="vbody">' +
+            '<div class="vidx">Lesson ' + idxLabel + '</div>' +
+            '<div class="vtitle">' + escapeHTML(item.title) + '</div>' +
+            '<div class="vdesc">' + (item.description || '') + '</div>' +
+          '</div>';
+        grid.appendChild(card);
+      });
+
+      if (typeof window.hydrateYouTubeEmbeds === 'function') window.hydrateYouTubeEmbeds();
+    }
+
+    async function loadLessons(){
+      var result = await client
+        .from('content_items')
+        .select('*')
+        .eq('page_type', 'academy_lesson')
+        .eq('course_id', COURSE_ID)
+        .eq('status', 'published')
+        .order('lesson_index', { ascending: true });
+
+      if (result.error) {
+        console.error('加载课时内容失败:', result.error);
+        return; // 失败时不动原有内容,避免页面变空白
+      }
+      renderLessons(result.data || []);
+    }
+
+    loadLessons();
+  })();
   </script>
 </body></html>
