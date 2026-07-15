@@ -82,7 +82,9 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
 .cg2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 .ccard{background:var(--black);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;cursor:pointer;transition:transform .2s;text-decoration:none}
 .ccard:hover{transform:translateY(-2px)}
-.cthumb{padding-top:56.25%;position:relative;background:linear-gradient(135deg,var(--dark-green),var(--mid-green));overflow:hidden}
+.cthumb{padding-top:56.25%;position:relative;background:linear-gradient(135deg,var(--dark-green),var(--mid-green));background-size:cover;background-position:center;overflow:hidden}
+.cthumb.has-cover .cthumb-deco{display:none}
+.cthumb.has-cover::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,.6) 100%);pointer-events:none}
 .cthumb-deco{position:absolute;border-radius:50%;background:var(--grad);pointer-events:none}
 .cthumb-inner{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 .cthumb-count{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.5)}
@@ -326,11 +328,23 @@ footer{background:var(--black);color:rgba(255,255,255,.55);padding:52px 40px 32p
       var cmeta = card.querySelector('.cmeta');
       var cthumbLabel = card.querySelector('.cthumb-label');
       var cthumbCount = card.querySelector('.cthumb-count');
+      var cthumb = card.querySelector('.cthumb');
 
       if (cpub) cpub.textContent = course.course_group || cpub.textContent;
       if (ctitle) ctitle.textContent = course.description || ctitle.textContent;
       if (cthumbLabel) cthumbLabel.textContent = course.course_title || cthumbLabel.textContent;
       if (cthumbCount) cthumbCount.textContent = lessonCount + ' Videos';
+
+      // 封面图:有就铺满卡片当背景图(并叠一层渐深遮罩保证文字可读),没有就保留原来的渐变装饰
+      if (cthumb) {
+        if (course.cover_image) {
+          cthumb.style.backgroundImage = "url('" + course.cover_image + "')";
+          cthumb.classList.add('has-cover');
+        } else {
+          cthumb.style.backgroundImage = '';
+          cthumb.classList.remove('has-cover');
+        }
+      }
 
       var metaText = lessonCount + ' lessons';
       if (course.duration_text) metaText += ' · ' + course.duration_text;
