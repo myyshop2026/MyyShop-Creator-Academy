@@ -287,6 +287,8 @@ footer .wrap{max-width:var(--maxw);margin-inline:auto}
     }
     var courses = coursesResult.data || [];
 
+    var totalLessons = 0; // 累加所有合集的已发布视频数
+
     // 每门课再单独查一次已发布课时数,保证数字永远和实际一致
     for (var i = 0; i < courses.length; i++) {
       var course = courses[i];
@@ -297,6 +299,7 @@ footer .wrap{max-width:var(--maxw);margin-inline:auto}
         .eq('course_id', course.course_id)
         .eq('status', 'published');
       var lessonCount = countResult.count || 0;
+      totalLessons += lessonCount;
 
       var card = document.querySelector('.ccard[href="' + course.course_id + '.html"]');
       if (!card) continue;
@@ -324,10 +327,21 @@ footer .wrap{max-width:var(--maxw);margin-inline:auto}
         }
       }
 
-      var metaText = lessonCount + ' lessons';
-      if (course.duration_text) metaText += ' · ' + course.duration_text;
-      if (cmeta) cmeta.textContent = metaText;
+      // 只显示课时数,去掉预估时间
+      if (cmeta) cmeta.textContent = lessonCount + ' lessons';
     }
+
+    // 统计数字用真实数据:Courses=合集数, Video Lessons=视频总数
+    var statCells = document.querySelectorAll('.stats-row .stat-cell');
+    statCells.forEach(function(cell){
+      var label = cell.querySelector('.stat-l');
+      var num = cell.querySelector('.stat-n');
+      if (!label || !num) return;
+      var t = (label.textContent || '').trim().toLowerCase();
+      if (t === 'courses') num.textContent = courses.length;
+      else if (t === 'video lessons') num.textContent = totalLessons;
+      // Platform Fees ($0) 保持不变
+    });
   }
 
   updateCourseCards();
