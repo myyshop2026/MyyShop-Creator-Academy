@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-J31ZJS2KXN"></script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-T8T33F8138"></script>
   <script>
     window.dataLayer=window.dataLayer||[];
     function gtag(){dataLayer.push(arguments);}
-    gtag('js',new Date());gtag('config','G-J31ZJS2KXN');
+    gtag('js',new Date());gtag('config','G-T8T33F8138');
     function trackEvent(n,p){gtag('event',n,p);}
   </script>
   <style>
@@ -409,6 +409,9 @@ footer .wrap{max-width:var(--maxw);margin:0 auto;padding-inline:var(--pad)}
           // 上传的视频文件:直接用原生video标签播放,封面图作为poster
           mediaHtml = '<div class="yt-player"><video src="' + escapeHTML(item.media_url) + '" ' +
             (item.cover_image ? 'poster="' + escapeHTML(item.cover_image) + '" ' : '') +
+            'data-course-id="' + escapeHTML(item.course_id) + '" ' +
+            'data-video-index="' + escapeHTML(item.lesson_index) + '" ' +
+            'data-video-title="' + escapeHTML(item.title) + '" ' +
             'controls playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:11px 11px 0 0"></video></div>';
         } else {
           mediaHtml = '<div class="yt-player" data-yt-url="' + escapeHTML(item.media_url) + '" ' +
@@ -542,6 +545,81 @@ footer .wrap{max-width:var(--maxw);margin:0 auto;padding-inline:var(--pad)}
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', injectLogos);
   } else { injectLogos(); }
+})();
+</script>
+<script>
+// ========== 视频完播率追踪(原生 video) ==========
+(function(){
+  var MILESTONES = [25, 50, 75, 100];
+  // 每个 video 元素记录已上报过的里程碑,避免重复
+  function attach(video){
+    if (video._progressBound) return;
+    video._progressBound = true;
+    var fired = {};
+    function meta(){
+      // 从最近的 .yt-player / .vcard 上取视频信息
+      var player = video.closest('.yt-player') || video.closest('.vcard');
+      var card = video.closest('.vcard');
+      var ytp = video.closest('[data-course-id]') || card && card.querySelector('[data-course-id]');
+      return {
+        course_id: video.getAttribute('data-course-id') || (ytp && ytp.getAttribute('data-course-id')) || '',
+        video_index: video.getAttribute('data-video-index') || (ytp && ytp.getAttribute('data-video-index')) || '',
+        video_title: video.getAttribute('data-video-title') || (ytp && ytp.getAttribute('data-video-title')) || ''
+      };
+    }
+    // 播放开始:补一个 video_play_click(与 YouTube 分支对齐,保证离线视频也统计"播放")
+    video.addEventListener('play', function(){
+      if (fired.__played) return;
+      fired.__played = true;
+      var m = meta();
+      if (typeof trackEvent === 'function') {
+        trackEvent('video_play_click', {course_id:m.course_id, video_index:parseInt(m.video_index)||m.video_index, video_title:m.video_title});
+      }
+    });
+    // 进度里程碑
+    video.addEventListener('timeupdate', function(){
+      if (!video.duration || isNaN(video.duration)) return;
+      var pct = (video.currentTime / video.duration) * 100;
+      MILESTONES.forEach(function(ms){
+        if (pct >= ms && !fired[ms]) {
+          fired[ms] = true;
+          var m = meta();
+          if (typeof trackEvent === 'function') {
+            trackEvent('video_progress', {
+              course_id: m.course_id,
+              video_index: parseInt(m.video_index)||m.video_index,
+              video_title: m.video_title,
+              percent: ms
+            });
+          }
+        }
+      });
+    });
+    // 播完:确保 100% 一定上报(有些浏览器 timeupdate 到不了正好100)
+    video.addEventListener('ended', function(){
+      if (fired[100]) return;
+      fired[100] = true;
+      var m = meta();
+      if (typeof trackEvent === 'function') {
+        trackEvent('video_progress', {course_id:m.course_id, video_index:parseInt(m.video_index)||m.video_index, video_title:m.video_title, percent:100});
+      }
+    });
+  }
+  function scan(){ document.querySelectorAll('video').forEach(attach); }
+  // 初次 + 监听后续动态插入的 video(Supabase 渲染完成后)
+  function run(){
+    scan();
+    // Supabase 渲染是异步的,用 MutationObserver 捕获后插入的 video
+    if (window.MutationObserver) {
+      var mo = new MutationObserver(function(){ scan(); });
+      mo.observe(document.body, {childList:true, subtree:true});
+    } else {
+      // 退化:定时扫几次
+      var n=0, t=setInterval(function(){ scan(); if(++n>10) clearInterval(t); }, 800);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+  else run();
 })();
 </script>
 </body></html>
