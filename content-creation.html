@@ -304,6 +304,7 @@ footer .wrap{max-width:var(--maxw);margin:0 auto;padding-inline:var(--pad)}
     // 把占位的.yt-player换成真正能播放的iframe;数据库读出来动态插入的卡片也会走这个函数
     function loadYouTubeIframe(el, embedUrl, courseId, videoIndex, videoTitle) {
       var iframe = document.createElement('iframe');
+      iframe.id = 'ytp-' + courseId + '-' + videoIndex + '-' + Math.random().toString(36).slice(2, 8);
       iframe.src = embedUrl + (embedUrl.indexOf('?') > -1 ? '&' : '?') + 'autoplay=1';
       iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
       iframe.allowFullscreen = true;
@@ -315,6 +316,10 @@ footer .wrap{max-width:var(--maxw);margin:0 auto;padding-inline:var(--pad)}
         video_index: parseInt(videoIndex),
         video_title: videoTitle
       });
+      // YouTube iframe 无法用原生 <video> 的 timeupdate 监听进度(跨域),这里接入 YT IFrame API 补上完播率追踪
+      if (window.registerYTProgressPlayer) {
+        window.registerYTProgressPlayer(iframe.id, {course_id: courseId, video_index: videoIndex, video_title: videoTitle});
+      }
     }
 
     function hydrateYouTubeEmbeds() {
@@ -350,12 +355,16 @@ footer .wrap{max-width:var(--maxw);margin:0 auto;padding-inline:var(--pad)}
         } else {
           // 没有封面图:维持原来的行为,页面加载时直接嵌入播放器
           var iframe = document.createElement('iframe');
+          iframe.id = 'ytp-' + courseId + '-' + videoIndex + '-' + Math.random().toString(36).slice(2, 8);
           iframe.src = embedUrl;
           iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
           iframe.allowFullscreen = true;
           iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:11px 11px 0 0;';
           el.innerHTML = '';
           el.appendChild(iframe);
+          if (window.registerYTProgressPlayer) {
+            window.registerYTProgressPlayer(iframe.id, {course_id: courseId, video_index: videoIndex, video_title: videoTitle});
+          }
 
           iframe.addEventListener('load', function() {
             el.closest('.vcard').addEventListener('click', function() {
@@ -620,6 +629,93 @@ footer .wrap{max-width:var(--maxw);margin:0 auto;padding-inline:var(--pad)}
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
   else run();
+})();
+</script>
+<script>
+// ========== 视频完播率追踪(YouTube iframe 嵌入) ==========
+// 上面那段原生 <video> 的 timeupdate/play/ended 监听不到 YouTube iframe 内部的播放状态(跨域限制,
+// 父页面拿不到 iframe 里 <video> 的引用),导致本站实际使用的 YouTube 视频从来不会触发 video_progress。
+// embedUrl 里其实已经带了 enablejsapi=1 和 origin 参数,这里把 YouTube IFrame Player API 接上,
+// 补齐 25/50/75/100% 的完播率里程碑上报,和原生 video 的口径(course_id/video_index/video_title/percent)保持一致。
+(function(){
+  var MILESTONES = [25, 50, 75, 100];
+  var pending = [];   // 还没等到 YT API 就绪的播放器,先排队
+  var players = {};   // iframeId -> {fired:{}, timer:null}
+
+  function ensureApiLoaded(){
+    if (window.YT && window.YT.Player) return;
+    if (document.getElementById('yt-iframe-api')) return;
+    var tag = document.createElement('script');
+    tag.id = 'yt-iframe-api';
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  }
+
+  // 供 loadYouTubeIframe() / hydrateYouTubeEmbeds() 在创建完 iframe 后调用
+  window.registerYTProgressPlayer = function(iframeId, meta){
+    ensureApiLoaded();
+    if (window.YT && window.YT.Player) {
+      createPlayer(iframeId, meta);
+    } else {
+      pending.push({id: iframeId, meta: meta});
+    }
+  };
+
+  var prevReady = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = function(){
+    if (typeof prevReady === 'function') prevReady();
+    pending.forEach(function(p){ createPlayer(p.id, p.meta); });
+    pending = [];
+  };
+
+  function createPlayer(iframeId, meta){
+    var el = document.getElementById(iframeId);
+    if (!el) return; // 卡片可能已经被重新渲染/移除
+    var state = {fired: {}, timer: null};
+    players[iframeId] = state;
+
+    function reportIfCross(pct){
+      MILESTONES.forEach(function(ms){
+        if (pct >= ms && !state.fired[ms]) {
+          state.fired[ms] = true;
+          trackEvent('video_progress', {
+            course_id: meta.course_id,
+            video_index: parseInt(meta.video_index) || meta.video_index,
+            video_title: meta.video_title,
+            percent: ms
+          });
+        }
+      });
+    }
+
+    function stopTimer(){
+      if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    }
+
+    try {
+      new YT.Player(iframeId, {
+        events: {
+          onStateChange: function(e){
+            if (e.data === YT.PlayerState.PLAYING) {
+              if (state.timer) return;
+              state.timer = setInterval(function(){
+                try {
+                  var dur = e.target.getDuration();
+                  var cur = e.target.getCurrentTime();
+                  if (dur > 0) reportIfCross((cur / dur) * 100);
+                } catch(err){}
+              }, 1000);
+            } else if (e.data === YT.PlayerState.ENDED) {
+              reportIfCross(100);
+              stopTimer();
+            } else if (e.data === YT.PlayerState.PAUSED) {
+              stopTimer();
+            }
+          }
+        }
+      });
+    } catch(err){ /* 忽略偶发的初始化异常,不影响其它埋点 */ }
+  }
 })();
 </script>
 </body></html>
